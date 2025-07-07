@@ -3,7 +3,8 @@
 const { Server } = require('node:http');
 const path = require('node:path');
 const { pipeline } = require('node:stream');
-const { createReadStream, createWriteStream } = require('node:fs');
+const { createReadStream } = require('node:fs');
+const fs = require('fs');
 
 function createServer() {
   const server = new Server();
@@ -57,17 +58,9 @@ function createServer() {
         const jsonPath = path.resolve(__dirname, '..', 'db', 'expense.json');
 
         try {
-          const writeStream = createWriteStream(jsonPath);
-
-          writeStream.on('error', () => {
-            return sendResponse(res, 500, 'Error saving expense data');
-          });
-
-          writeStream.write(JSON.stringify(fields), () => {
-            writeStream.end();
-            res.writeHead(200, { 'content-type': 'application/json' });
-            res.end(JSON.stringify(fields));
-          });
+          fs.writeFileSync(jsonPath, JSON.stringify(fields, null, 2));
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify(fields));
         } catch (err) {
           sendResponse(res, 500, 'Error saving expense');
         }
