@@ -2,70 +2,87 @@
 
 const { Server } = require('node:http');
 const path = require('node:path');
-const querystring = require('querystring');
-const fs = require('fs');
+const { pipeline } = require('node:stream');
+const { createReadStream, createWriteStream } = require('node:fs');
 
 function createServer() {
   const server = new Server();
 
-  server.on('request', (req, res) => {
+  server.on('request', async (req, res) => {
     const { pathname } = new URL(req.url, `http://${req.headers.host}`);
 
-    if (pathname === '/') {
-      showPageWithForm(res);
+    if (pathname === '/' || pathname === '/index.html') {
+      const indexPath = path.resolve(__dirname, 'index.html');
+      const readStream = createReadStream(indexPath);
+
+      pipeline(readStream, res, (err) => {
+        if (err) {
+          sendResponse(res, 500, 'Error reading index.html');
+        }
+      });
+
+      return;
     }
 
-    if (pathname === '/submit') {
+    if (pathname === '/add-expense') {
       if (req.method === 'GET') {
-        return sendRequest(res, 400, 'Please return to home page');
-      } else if (req.method === 'POST') {
-        req.on('data', 'utf8', (data) => {
-          try {
-            const formData = querystring.parse(data);
-            const isFormValid = Object.values(formData).every((value) => value);
-
-            if (!isFormValid) {
-              sendRequest(
-                res,
-                400,
-                'Please return and choose all params in form',
-              );
-            } else {
-              res.end(JSON.stringify(formData));
-            }
-          } catch (err) {
-            sendRequest(res, 500, `Internal server error parsing JSON: ${err}`);
-          }
-        });
+        return sendResponse(
+          res,
+          400,
+          'GET requests are not allowed on /submit-expense',
+        );
       }
 
-      sendRequest(res, 400, 'Invalid search link');
-    }
-  });
+      let body = '';
 
-  server.on('error', (res, error) => {
-    sendRequest(res, 500, `Internal Server Error: ${error}`);
+      req.on('data', (chunk) => {
+        body += chunk.toString();
+      });
+
+      req.on('end', () => {
+        let fields;
+
+        try {
+          fields = JSON.parse(body);
+        } catch (err) {
+          return sendResponse(res, 400, 'Invalid JSON');
+        }
+
+        const { date, title, amount } = fields;
+
+        if (!date || !title || !amount) {
+          return sendResponse(res, 400, 'Missing required fields');
+        }
+
+        const jsonPath = path.resolve(__dirname, '..', 'db', 'expense.json');
+
+        try {
+          const writeStream = createWriteStream(jsonPath);
+
+          writeStream.on('error', () => {
+            return sendResponse(res, 500, 'Error saving expense data');
+          });
+
+          writeStream.write(JSON.stringify(fields), () => {
+            writeStream.end();
+            res.writeHead(200, { 'content-type': 'application/json' });
+            res.end(JSON.stringify(fields));
+          });
+        } catch (err) {
+          sendResponse(res, 500, 'Error saving expense');
+        }
+      });
+
+      return;
+    }
+    sendResponse(res, 404, 'Not Found');
   });
 
   return server;
 }
 
-function showPageWithForm(res) {
-  const filePath = path.join(__dirname, 'index.html');
-  const readFileStream = fs.createReadStream(filePath);
-
-  res.writeHead(200, { 'content-type': 'text/html' });
-  readFileStream.pipe(res);
-
-  readFileStream.on('error', (error) => {
-    sendRequest(res, 500, error.message);
-  });
-
-  res.on('close', () => readFileStream.destroy());
-}
-
-function sendRequest(res, statusCode, message) {
-  res.writeHead(statusCode, { 'Content-Type': 'text/plain' });
+function sendResponse(res, statusCode, message) {
+  res.writeHead(statusCode, { 'content-type': 'text/plain' });
   res.end(message);
 }
 
